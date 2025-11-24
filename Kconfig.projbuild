@@ -1,0 +1,15 @@
+menu "Mario AI WiFi Configuration"
+
+    config WIFI_SSID
+        string "WiFi SSID"
+        default "your_wifi_ssid"
+        help
+            SSID (network name) for the Mario AI to connect to.
+
+    config WIFI_PASSWORD
+        string "WiFi Password"
+        default "your_wifi_password"
+        help
+            WiFi password (WPA or WPA2) for the Mario AI to use.
+
+endmenu

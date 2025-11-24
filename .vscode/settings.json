@@ -1,8 +1,9 @@
 {
     "idf.flashType": "UART",
-    "idf.port": "/dev/tty.usbmodem11301",
+    "idf.port": "/dev/tty.usbmodem1301",
     "idf.baudRate": "460800",
     "idf.openOcdConfigs": [
         "board/esp32s3-builtin.cfg"
-    ]
+    ],
+    "idf.pythonInstallPath": "/Users/zhangao/.pyenv/shims/python"
 }

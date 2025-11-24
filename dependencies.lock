@@ -18,12 +18,12 @@ dependencies:
       type: idf
     version: 5.5.1
   lvgl/lvgl:
-    component_hash: b702d642e03e95928046d5c6726558e6444e112420c77efa5fdb6650b0a13c5d
+    component_hash: 17e68bfd21f0edf4c3ee838e2273da840bf3930e5dbc3bfa6c1190c3aed41f9f
     dependencies: []
     source:
       registry_url: https://components.espressif.com
       type: service
-    version: 9.3.0
+    version: 9.4.0
 direct_dependencies:
 - espressif/esp_lvgl_port
 manifest_hash: dbc996688a4f6c08bd320f15bfdf09502a290a5d453a1e7a97f5c5e336322e20

@@ -16,9 +16,11 @@
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "lvgl.h"
+#include "baidu_agent_client.h"
+#include "wifi_manager.h"
 #include <stdio.h>
 
-static const char *TAG = "LVGL_DEMO";
+static const char *TAG = "MARIO_AI";
 
 // I2C 配置 - 用于 PCA9557 IO 扩展芯片
 #define I2C_MASTER_NUM I2C_NUM_1
@@ -54,6 +56,11 @@ static esp_lcd_panel_io_handle_t panel_io = NULL;
 static esp_lcd_panel_handle_t panel = NULL;
 static i2c_master_bus_handle_t i2c_bus = NULL;
 static i2c_master_dev_handle_t pca9557_dev = NULL;
+
+// 百度智能体客户端
+static baidu_agent_handle_t agent_handle = NULL;
+static lv_obj_t *status_label = NULL;
+static lv_obj_t *response_label = NULL;
 
 // PCA9557 寄存器地址
 #define PCA9557_REG_INPUT 0x00
@@ -200,7 +207,8 @@ static void init_lvgl(void) {
 
   ESP_LOGI(TAG, "初始化 LVGL 端口...");
   lvgl_port_cfg_t port_cfg = ESP_LVGL_PORT_INIT_CONFIG();
-  port_cfg.task_priority = 1;
+  port_cfg.task_priority = 4;  // 提高优先级到4，避免看门狗超时
+  port_cfg.task_max_sleep_ms = 10;  // 设置最大休眠时间，让空闲任务有机会运行
 #if CONFIG_SOC_CPU_CORES_NUM > 1
   port_cfg.task_affinity = 1;
 #endif
@@ -212,8 +220,8 @@ static void init_lvgl(void) {
       .io_handle = panel_io,
       .panel_handle = panel,
       .control_handle = NULL,
-      .buffer_size = LCD_H_RES * 20, // 使用较小的缓冲区
-      .double_buffer = false,
+      .buffer_size = LCD_H_RES * 10, // 减小缓冲区到10行，避免看门狗超时
+      .double_buffer = true,  // 启用双缓冲提高性能
       .trans_size = 0,
       .hres = LCD_H_RES,
       .vres = LCD_V_RES,
@@ -249,48 +257,190 @@ static void init_lvgl(void) {
   ESP_LOGI(TAG, "✓ LCD 显示器添加完成");
 }
 
-// 创建 UI
-static void create_demo_ui(void) {
-  ESP_LOGI(TAG, "创建 UI 界面...");
+// 百度智能体事件回调
+static void agent_event_callback(
+    baidu_agent_event_type_t event_type,
+    const char *data,
+    size_t data_len,
+    void *user_data) {
+  
+  switch (event_type) {
+    case BAIDU_AGENT_EVENT_CONNECTED:
+      ESP_LOGI(TAG, "百度智能体已连接");
+      if (lvgl_port_lock(0)) {
+        if (status_label != NULL) {
+          lv_label_set_text(status_label, "已连接");
+        }
+        lvgl_port_unlock();
+      }
+      break;
+      
+    case BAIDU_AGENT_EVENT_MESSAGE:
+      ESP_LOGI(TAG, "收到回复: %.*s", (int)data_len, data);
+      if (lvgl_port_lock(0)) {
+        if (response_label != NULL) {
+          lv_label_set_text(response_label, data);
+        }
+        lvgl_port_unlock();
+      }
+      break;
+      
+    case BAIDU_AGENT_EVENT_ERROR:
+      ESP_LOGE(TAG, "错误: %s", data);
+      if (lvgl_port_lock(0)) {
+        if (status_label != NULL) {
+          lv_label_set_text(status_label, "连接错误");
+        }
+        lvgl_port_unlock();
+      }
+      break;
+      
+    case BAIDU_AGENT_EVENT_DISCONNECTED:
+      ESP_LOGI(TAG, "百度智能体已断开");
+      if (lvgl_port_lock(0)) {
+        if (status_label != NULL) {
+          lv_label_set_text(status_label, "已断开");
+        }
+        lvgl_port_unlock();
+      }
+      break;
+      
+    default:
+      break;
+  }
+}
+
+// 创建 Mario 助手 UI
+static void create_mario_ui(void) {
+  ESP_LOGI(TAG, "创建 Mario 助手 UI 界面...");
 
   // 锁定 LVGL
   if (lvgl_port_lock(0)) {
     // 获取活动屏幕
     lv_obj_t *scr = lv_screen_active();
+
+    // 设置背景色为红色（Mario主题色）
     ESP_LOGI(TAG, "  - 设置背景色");
-    lv_obj_set_style_bg_color(scr, lv_color_hex(0x003a57), LV_PART_MAIN);
+    lv_obj_set_style_bg_color(scr, lv_color_hex(0xE60012), LV_PART_MAIN);
 
-    // 创建标题标签
-    ESP_LOGI(TAG, "  - 创建标题标签");
-    lv_obj_t *label = lv_label_create(scr);
-    lv_label_set_text(label, "Frontend Chao Fen King");
-    lv_obj_set_style_text_color(label, lv_color_white(), 0);
-    lv_obj_set_style_text_font(label, &lv_font_montserrat_32, 0);
-    lv_obj_align(label, LV_ALIGN_CENTER, 0, -20);
+    // 创建主标题标签 "我是Mario"
+    ESP_LOGI(TAG, "  - 创建主标题");
+    lv_obj_t *title_label = lv_label_create(scr);
+    lv_label_set_text(title_label, "我是Mario");
+    lv_obj_set_style_text_color(title_label, lv_color_white(), 0);
+    lv_obj_set_style_text_font(title_label, &lv_font_montserrat_14, 0);
+    lv_obj_align(title_label, LV_ALIGN_CENTER, 0, -80);
 
-    // 创建日期标签
-    ESP_LOGI(TAG, "  - 创建日期标签");
-    lv_obj_t *date_label = lv_label_create(scr);
-    lv_label_set_text(date_label, "2025-10-16");
-    lv_obj_set_style_text_color(date_label, lv_color_white(), 0);
-    lv_obj_align(date_label, LV_ALIGN_CENTER, 0, 20);
+    // 创建副标题
+    ESP_LOGI(TAG, "  - 创建副标题");
+    lv_obj_t *subtitle_label = lv_label_create(scr);
+    lv_label_set_text(subtitle_label, "百度智能体版");
+    lv_obj_set_style_text_color(subtitle_label, lv_color_white(), 0);
+    lv_obj_set_style_text_font(subtitle_label, &lv_font_montserrat_14, 0);
+    lv_obj_align(subtitle_label, LV_ALIGN_CENTER, 0, -50);
+
+    // 创建响应文本标签
+    ESP_LOGI(TAG, "  - 创建响应标签");
+    response_label = lv_label_create(scr);
+    lv_label_set_text(response_label, "等待消息...");
+    lv_obj_set_style_text_color(response_label, lv_color_white(), 0);
+    lv_obj_set_style_text_font(response_label, &lv_font_montserrat_14, 0);
+    lv_obj_set_width(response_label, LCD_H_RES - 20);
+    lv_label_set_long_mode(response_label, LV_LABEL_LONG_WRAP);
+    lv_obj_align(response_label, LV_ALIGN_CENTER, 0, 10);
+
+    // 创建状态标签
+    ESP_LOGI(TAG, "  - 创建状态标签");
+    status_label = lv_label_create(scr);
+    lv_label_set_text(status_label, "准备就绪");
+    lv_obj_set_style_text_color(status_label, lv_color_hex(0xFFD700), 0);  // 金色
+    lv_obj_set_style_text_font(status_label, &lv_font_montserrat_14, 0);
+    lv_obj_align(status_label, LV_ALIGN_BOTTOM_MID, 0, -20);
 
     // 强制刷新屏幕
     lv_obj_invalidate(scr);
     lv_refr_now(NULL);
 
     lvgl_port_unlock();
-    ESP_LOGI(TAG, "✓ UI 创建完成");
+    ESP_LOGI(TAG, "✓ Mario UI 创建完成");
   } else {
     ESP_LOGE(TAG, "✗ 无法锁定 LVGL");
   }
 }
 
+// WiFi 状态回调
+static void wifi_status_callback(bool connected) {
+  if (connected) {
+    ESP_LOGI(TAG, "WiFi 已连接");
+    if (lvgl_port_lock(0)) {
+      if (status_label != NULL) {
+        lv_label_set_text(status_label, "WiFi 已连接");
+      }
+      lvgl_port_unlock();
+    }
+  } else {
+    ESP_LOGI(TAG, "WiFi 断开连接");
+    if (lvgl_port_lock(0)) {
+      if (status_label != NULL) {
+        lv_label_set_text(status_label, "WiFi 断开");
+      }
+      lvgl_port_unlock();
+    }
+  }
+}
+
+// 初始化 WiFi
+static void init_wifi(void) {
+  ESP_LOGI(TAG, "初始化 WiFi...");
+  
+  wifi_manager_config_t wifi_cfg = {
+    .ssid = "88888888",
+    .password = "dami1010",
+    .callback = wifi_status_callback,
+    .max_retry = 5,
+  };
+  
+  esp_err_t ret = wifi_manager_init(&wifi_cfg);
+  if (ret != ESP_OK) {
+    ESP_LOGE(TAG, "✗ WiFi 初始化失败: %s", esp_err_to_name(ret));
+    return;
+  }
+  
+  // 获取 IP 地址
+  char ip_str[16];
+  if (wifi_manager_get_ip_str(ip_str, sizeof(ip_str)) == ESP_OK) {
+    ESP_LOGI(TAG, "✓ WiFi 连接成功, IP: %s", ip_str);
+  }
+}
+
+// 初始化百度智能体
+static void init_baidu_agent(void) {
+  ESP_LOGI(TAG, "初始化百度智能体客户端...");
+  
+  baidu_agent_config_t config = {
+    .app_id = "PcQ6T6ShKPSGSeaITclWx8WS0HQ70opz",
+    .secret_key = "YLMyCANTXF4TNhRdww9LrLXSGVtTKdje",
+    .callback = agent_event_callback,
+    .user_data = NULL,
+    .auto_reconnect = true,
+    .reconnect_interval = 5000,
+  };
+  
+  agent_handle = baidu_agent_init(&config);
+  if (agent_handle == NULL) {
+    ESP_LOGE(TAG, "✗ 百度智能体初始化失败");
+    return;
+  }
+  
+  ESP_LOGI(TAG, "✓ 百度智能体初始化完成");
+}
+
 void app_main(void) {
   ESP_LOGI(TAG, "");
   ESP_LOGI(TAG, "╔════════════════════════════════════════╗");
-  ESP_LOGI(TAG, "║   LVGL Hello World Demo 启动中...     ║");
+  ESP_LOGI(TAG, "║   Mario AI Assistant 启动中...        ║");
   ESP_LOGI(TAG, "║   立创实战派 ESP32-S3                 ║");
+  ESP_LOGI(TAG, "║   百度智能体集成版                    ║");
   ESP_LOGI(TAG, "╚════════════════════════════════════════╝");
   ESP_LOGI(TAG, "");
 
@@ -309,15 +459,33 @@ void app_main(void) {
   // 步骤 5: 初始化 LVGL
   init_lvgl();
 
-  // 步骤 6: 创建 UI
-  create_demo_ui();
+  // 步骤 6: 创建 Mario UI
+  create_mario_ui();
+
+  // 步骤 7: 初始化 WiFi
+  init_wifi();
+
+  // 步骤 8: 初始化百度智能体
+  init_baidu_agent();
 
   ESP_LOGI(TAG, "");
   ESP_LOGI(TAG, "╔════════════════════════════════════════╗");
-  ESP_LOGI(TAG, "║   所有初始化完成！                    ║");
-  ESP_LOGI(TAG, "║   屏幕应该显示内容了                  ║");
+  ESP_LOGI(TAG, "║   Mario AI 初始化完成！              ║");
+  ESP_LOGI(TAG, "║   It's-a me, Mario!                  ║");
   ESP_LOGI(TAG, "╚════════════════════════════════════════╝");
   ESP_LOGI(TAG, "");
+
+  // 等待 WiFi 连接稳定
+  vTaskDelay(pdMS_TO_TICKS(2000));
+
+  // 发送测试消息
+  ESP_LOGI(TAG, "发送测试消息到百度智能体...");
+  esp_err_t ret = baidu_agent_send_message(agent_handle, "你好，我是Mario！", 0);
+  if (ret == ESP_OK) {
+    ESP_LOGI(TAG, "✓ 消息发送成功");
+  } else {
+    ESP_LOGE(TAG, "✗ 消息发送失败: %s", esp_err_to_name(ret));
+  }
 
   // 主循环
   while (1) {
