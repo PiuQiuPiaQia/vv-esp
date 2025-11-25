@@ -18,6 +18,7 @@
 #include "lvgl.h"
 #include "baidu_agent_client.h"
 #include "wifi_manager.h"
+#include "font_manager.h"
 #include <stdio.h>
 
 static const char *TAG = "MARIO_AI";
@@ -280,6 +281,8 @@ static void agent_event_callback(
       if (lvgl_port_lock(0)) {
         if (response_label != NULL) {
           lv_label_set_text(response_label, data);
+          // 动态更新字体以支持中文
+          lv_obj_set_style_text_font(response_label, font_manager_get_font(data, 14), 0);
         }
         lvgl_port_unlock();
       }
@@ -326,25 +329,28 @@ static void create_mario_ui(void) {
     // 创建主标题标签 "我是Mario"
     ESP_LOGI(TAG, "  - 创建主标题");
     lv_obj_t *title_label = lv_label_create(scr);
-    lv_label_set_text(title_label, "我是Mario");
+    const char *title_text = "我是Mario";
+    lv_label_set_text(title_label, title_text);
     lv_obj_set_style_text_color(title_label, lv_color_white(), 0);
-    lv_obj_set_style_text_font(title_label, &lv_font_montserrat_14, 0);
+    lv_obj_set_style_text_font(title_label, font_manager_get_font(title_text, 16), 0);
     lv_obj_align(title_label, LV_ALIGN_CENTER, 0, -80);
 
     // 创建副标题
     ESP_LOGI(TAG, "  - 创建副标题");
     lv_obj_t *subtitle_label = lv_label_create(scr);
-    lv_label_set_text(subtitle_label, "百度智能体版");
+    const char *subtitle_text = "百度智能体版";
+    lv_label_set_text(subtitle_label, subtitle_text);
     lv_obj_set_style_text_color(subtitle_label, lv_color_white(), 0);
-    lv_obj_set_style_text_font(subtitle_label, &lv_font_montserrat_14, 0);
+    lv_obj_set_style_text_font(subtitle_label, font_manager_get_font(subtitle_text, 14), 0);
     lv_obj_align(subtitle_label, LV_ALIGN_CENTER, 0, -50);
 
     // 创建响应文本标签
     ESP_LOGI(TAG, "  - 创建响应标签");
     response_label = lv_label_create(scr);
-    lv_label_set_text(response_label, "等待消息...");
+    const char *wait_text = "等待消息...";
+    lv_label_set_text(response_label, wait_text);
     lv_obj_set_style_text_color(response_label, lv_color_white(), 0);
-    lv_obj_set_style_text_font(response_label, &lv_font_montserrat_14, 0);
+    lv_obj_set_style_text_font(response_label, font_manager_get_font(wait_text, 14), 0);
     lv_obj_set_width(response_label, LCD_H_RES - 20);
     lv_label_set_long_mode(response_label, LV_LABEL_LONG_WRAP);
     lv_obj_align(response_label, LV_ALIGN_CENTER, 0, 10);
@@ -352,9 +358,10 @@ static void create_mario_ui(void) {
     // 创建状态标签
     ESP_LOGI(TAG, "  - 创建状态标签");
     status_label = lv_label_create(scr);
-    lv_label_set_text(status_label, "准备就绪");
+    const char *ready_text = "准备就绪";
+    lv_label_set_text(status_label, ready_text);
     lv_obj_set_style_text_color(status_label, lv_color_hex(0xFFD700), 0);  // 金色
-    lv_obj_set_style_text_font(status_label, &lv_font_montserrat_14, 0);
+    lv_obj_set_style_text_font(status_label, font_manager_get_font(ready_text, 14), 0);
     lv_obj_align(status_label, LV_ALIGN_BOTTOM_MID, 0, -20);
 
     // 强制刷新屏幕
@@ -458,6 +465,9 @@ void app_main(void) {
 
   // 步骤 5: 初始化 LVGL
   init_lvgl();
+
+  // 步骤 5.5: 初始化字体管理器
+  font_manager_init();
 
   // 步骤 6: 创建 Mario UI
   create_mario_ui();

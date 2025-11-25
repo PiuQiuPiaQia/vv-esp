@@ -1,12 +1,10 @@
-idf_component_register(SRCS "wifi_manager.c" "baidu_agent_client.c" "hello_world_main.c"
+idf_component_register(SRCS "main.c"
                        REQUIRES
                            esp_lcd
-                           esp_http_client
-                           json
-                           esp_wifi
-                           nvs_flash
+                           wifi_manager
+                           baidu_agent
+                           font_manager
                        PRIV_REQUIRES
                            spi_flash
                            driver
-                           esp-tls
                        INCLUDE_DIRS ".")

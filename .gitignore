@@ -1,3 +1,37 @@
-build
-xiaozhi-esp32
+# Build artifacts
+build/
+*.bin
+*.elf
+*.map
+
+# ESP-IDF managed components
 managed_components/
+dependencies.lock
+
+# Configuration backups
+sdkconfig.old
+sdkconfig.bak
+*.bak
+
+# IDE and editor files
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+.cache/
+.kilocode/
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+*.egg-info/
+dist/
+*.egg
+
+# Reference projects (optional - remove if you want to track it)
+xiaozhi-esp32/
