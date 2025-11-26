@@ -9,6 +9,12 @@
 
 static const char *TAG = "font_manager";
 
+// Declare xiaozhi-fonts puhui fonts (阿里巴巴普惠体) - 完整字符集
+LV_FONT_DECLARE(font_puhui_14_1);
+LV_FONT_DECLARE(font_puhui_16_4);
+LV_FONT_DECLARE(font_puhui_20_4);
+LV_FONT_DECLARE(font_puhui_30_4);
+
 esp_err_t font_manager_init(void) {
     ESP_LOGI(TAG, "Font manager initialized");
     return ESP_OK;
@@ -48,30 +54,28 @@ bool font_manager_has_chinese(const char* text) {
 
 const lv_font_t* font_manager_get_chinese_font(int size) {
     // Return appropriate Chinese font based on size
-    // Use Source Han Sans SC (思源黑体) for Chinese text
+    // Use Alibaba PuHui font (阿里巴巴普惠体) for Chinese text - 完整字符集
 
     switch (size) {
         case 14:
-#if defined(CONFIG_LV_FONT_SOURCE_HAN_SANS_SC_14_CJK)
-            return &lv_font_source_han_sans_sc_14_cjk;
-#else
-            return LV_FONT_DEFAULT;
-#endif
+            return &font_puhui_14_1;
         case 16:
+            return &font_puhui_16_4;
         case 18:
         case 20:
-#if defined(CONFIG_LV_FONT_SOURCE_HAN_SANS_SC_16_CJK)
-            return &lv_font_source_han_sans_sc_16_cjk;
-#else
-            return LV_FONT_DEFAULT;
-#endif
+            return &font_puhui_20_4;
+        case 24:
+        case 30:
+            return &font_puhui_30_4;
         default:
-            // Fall back to 16pt font for larger sizes
-#if defined(CONFIG_LV_FONT_SOURCE_HAN_SANS_SC_16_CJK)
-            return &lv_font_source_han_sans_sc_16_cjk;
-#else
-            return LV_FONT_DEFAULT;
-#endif
+            // Fall back to appropriate font for other sizes
+            if (size <= 14) {
+                return &font_puhui_14_1;
+            } else if (size <= 20) {
+                return &font_puhui_16_4;
+            } else {
+                return &font_puhui_30_4;
+            }
     }
 }
 
