@@ -132,10 +132,8 @@ const lv_font_t* font_manager_get_font(const char* text, int size) {
 
     // Check if text contains Chinese characters
     if (font_manager_has_chinese(text)) {
-        ESP_LOGD(TAG, "Chinese text detected, using Chinese font");
         return font_manager_get_chinese_font(size);
     } else {
-        ESP_LOGD(TAG, "English text detected, using English font");
         return font_manager_get_english_font(size);
     }
 }

@@ -5,5 +5,6 @@
     "idf.openOcdConfigs": [
         "board/esp32s3-builtin.cfg"
     ],
-    "idf.pythonInstallPath": "/Users/zhangao/.pyenv/shims/python"
+    "idf.pythonInstallPath": "/Users/zhangao/.pyenv/shims/python",
+    "kiroAgent.configureMCP": "Disabled"
 }

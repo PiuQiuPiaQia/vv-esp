@@ -15,8 +15,8 @@ extern "C" {
 #endif
 
 // 百度智能体 API 配置
-#define BAIDU_AGENT_API_HOST "agents.baidu.com"
-#define BAIDU_AGENT_API_PATH "/api/conversation"
+#define BAIDU_AGENT_API_HOST "agentapi.baidu.com"
+#define BAIDU_AGENT_API_PATH "/assistant/conversation"
 #define BAIDU_AGENT_API_PORT 443
 
 // 最大重试次数
@@ -57,6 +57,8 @@ typedef void (*baidu_agent_callback_t)(
 typedef struct {
     const char *app_id;           // 应用 ID (必填)
     const char *secret_key;       // 密钥 (必填)
+    const char *open_id;          // 外部用户ID (必填，需要保证唯一性)
+    const char *thread_id;        // 会话ID (可选，续接对话时需要)
     baidu_agent_callback_t callback; // 回调函数 (必填)
     void *user_data;              // 用户自定义数据 (可选)
     bool auto_reconnect;          // 是否自动重连 (默认 true)

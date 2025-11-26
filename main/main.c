@@ -20,6 +20,7 @@
 #include "wifi_manager.h"
 #include "font_manager.h"
 #include <stdio.h>
+#include <string.h>
 
 static const char *TAG = "MARIO_AI";
 
@@ -60,8 +61,18 @@ static i2c_master_dev_handle_t pca9557_dev = NULL;
 
 // 百度智能体客户端
 static baidu_agent_handle_t agent_handle = NULL;
-static lv_obj_t *status_label = NULL;
-static lv_obj_t *response_label = NULL;
+static lv_obj_t *title_label = NULL;        // 顶部标题
+static lv_obj_t *user_input_label = NULL;   // 用户输入（右对齐）
+static lv_obj_t *response_label = NULL;     // AI 响应（左对齐）
+static lv_obj_t *status_label = NULL;       // 底部状态（右下角）
+
+// 响应文本累积缓冲区
+#define RESPONSE_BUFFER_SIZE 2048
+static char response_buffer[RESPONSE_BUFFER_SIZE] = {0};
+static size_t response_buffer_len = 0;
+
+// 当前用户输入
+static char current_user_input[256] = {0};
 
 // PCA9557 寄存器地址
 #define PCA9557_REG_INPUT 0x00
@@ -268,31 +279,53 @@ static void agent_event_callback(
   switch (event_type) {
     case BAIDU_AGENT_EVENT_CONNECTED:
       ESP_LOGI(TAG, "百度智能体已连接");
-      if (lvgl_port_lock(0)) {
+      if (lvgl_port_lock(100)) {
         if (status_label != NULL) {
-          lv_label_set_text(status_label, "已连接");
+          const char *status_text = "回答中...";
+          lv_label_set_text(status_label, status_text);
+          lv_obj_set_style_text_font(status_label, font_manager_get_font(status_text, 10), 0);
         }
         lvgl_port_unlock();
       }
       break;
       
     case BAIDU_AGENT_EVENT_MESSAGE:
-      ESP_LOGI(TAG, "收到回复: %.*s", (int)data_len, data);
-      if (lvgl_port_lock(0)) {
+      ESP_LOGI(TAG, "收到回复片段: %.*s", (int)data_len, data);
+      
+      // 追加到缓冲区
+      if (response_buffer_len + data_len < RESPONSE_BUFFER_SIZE - 1) {
+        memcpy(response_buffer + response_buffer_len, data, data_len);
+        response_buffer_len += data_len;
+        response_buffer[response_buffer_len] = '\0';
+      } else {
+        ESP_LOGW(TAG, "响应缓冲区已满，无法追加更多内容");
+      }
+      
+      // 更新屏幕显示
+      if (lvgl_port_lock(100)) {
         if (response_label != NULL) {
-          lv_label_set_text(response_label, data);
+          lv_label_set_text(response_label, response_buffer);
           // 动态更新字体以支持中文
-          lv_obj_set_style_text_font(response_label, font_manager_get_font(data, 14), 0);
+          lv_obj_set_style_text_font(response_label, font_manager_get_font(response_buffer, 14), 0);
+          ESP_LOGI(TAG, "✓ 已更新屏幕显示 (累积长度: %d)", response_buffer_len);
+        } else {
+          ESP_LOGW(TAG, "response_label 为 NULL");
         }
         lvgl_port_unlock();
+      } else {
+        ESP_LOGE(TAG, "✗ 无法获取 LVGL 锁");
       }
       break;
       
     case BAIDU_AGENT_EVENT_ERROR:
       ESP_LOGE(TAG, "错误: %s", data);
-      if (lvgl_port_lock(0)) {
+      if (lvgl_port_lock(100)) {
         if (status_label != NULL) {
-          lv_label_set_text(status_label, "连接错误");
+          char error_text[64];
+          snprintf(error_text, sizeof(error_text), "错误: %s", data);
+          lv_label_set_text(status_label, error_text);
+          lv_obj_set_style_text_font(status_label, font_manager_get_font(error_text, 10), 0);
+          lv_obj_set_style_text_color(status_label, lv_color_hex(0xFF0000), 0);  // 红色
         }
         lvgl_port_unlock();
       }
@@ -300,9 +333,12 @@ static void agent_event_callback(
       
     case BAIDU_AGENT_EVENT_DISCONNECTED:
       ESP_LOGI(TAG, "百度智能体已断开");
-      if (lvgl_port_lock(0)) {
+      if (lvgl_port_lock(100)) {
         if (status_label != NULL) {
-          lv_label_set_text(status_label, "已断开");
+          const char *done_text = "回答结束";
+          lv_label_set_text(status_label, done_text);
+          lv_obj_set_style_text_font(status_label, font_manager_get_font(done_text, 10), 0);
+          lv_obj_set_style_text_color(status_label, lv_color_hex(0xFFD700), 0);  // 恢复金色
         }
         lvgl_port_unlock();
       }
@@ -313,63 +349,67 @@ static void agent_event_callback(
   }
 }
 
-// 创建 Mario 助手 UI
+// 创建对话 UI
 static void create_mario_ui(void) {
-  ESP_LOGI(TAG, "创建 Mario 助手 UI 界面...");
+  ESP_LOGI(TAG, "创建对话 UI 界面...");
 
   // 锁定 LVGL
   if (lvgl_port_lock(0)) {
     // 获取活动屏幕
     lv_obj_t *scr = lv_screen_active();
 
-    // 设置背景色为红色（Mario主题色）
+    // 设置背景色为纯黑色
     ESP_LOGI(TAG, "  - 设置背景色");
-    lv_obj_set_style_bg_color(scr, lv_color_hex(0xE60012), LV_PART_MAIN);
+    lv_obj_set_style_bg_color(scr, lv_color_hex(0x000000), LV_PART_MAIN);
 
-    // 创建主标题标签 "我是Mario"
-    ESP_LOGI(TAG, "  - 创建主标题");
-    lv_obj_t *title_label = lv_label_create(scr);
-    const char *title_text = "我是Mario";
+    // 顶部标题 "百度智能体"
+    ESP_LOGI(TAG, "  - 创建顶部标题");
+    title_label = lv_label_create(scr);
+    const char *title_text = "百度智能体";
     lv_label_set_text(title_label, title_text);
     lv_obj_set_style_text_color(title_label, lv_color_white(), 0);
     lv_obj_set_style_text_font(title_label, font_manager_get_font(title_text, 16), 0);
-    lv_obj_align(title_label, LV_ALIGN_CENTER, 0, -80);
+    lv_obj_align(title_label, LV_ALIGN_TOP_MID, 0, 5);
 
-    // 创建副标题
-    ESP_LOGI(TAG, "  - 创建副标题");
-    lv_obj_t *subtitle_label = lv_label_create(scr);
-    const char *subtitle_text = "百度智能体版";
-    lv_label_set_text(subtitle_label, subtitle_text);
-    lv_obj_set_style_text_color(subtitle_label, lv_color_white(), 0);
-    lv_obj_set_style_text_font(subtitle_label, font_manager_get_font(subtitle_text, 14), 0);
-    lv_obj_align(subtitle_label, LV_ALIGN_CENTER, 0, -50);
+    // 用户输入标签（第二行，右对齐）
+    ESP_LOGI(TAG, "  - 创建用户输入标签");
+    user_input_label = lv_label_create(scr);
+    lv_label_set_text(user_input_label, "");
+    lv_obj_set_style_text_color(user_input_label, lv_color_hex(0x4CAF50), 0);  // 绿色
+    lv_obj_set_style_text_font(user_input_label, font_manager_get_font("", 12), 0);
+    lv_obj_set_width(user_input_label, LCD_H_RES - 20);
+    lv_label_set_long_mode(user_input_label, LV_LABEL_LONG_WRAP);
+    lv_obj_set_style_text_align(user_input_label, LV_TEXT_ALIGN_RIGHT, 0);
+    lv_obj_align(user_input_label, LV_ALIGN_TOP_RIGHT, -10, 30);
 
-    // 创建响应文本标签
+    // AI 响应标签（左对齐，占据大部分空间）
     ESP_LOGI(TAG, "  - 创建响应标签");
     response_label = lv_label_create(scr);
     const char *wait_text = "等待消息...";
     lv_label_set_text(response_label, wait_text);
     lv_obj_set_style_text_color(response_label, lv_color_white(), 0);
-    lv_obj_set_style_text_font(response_label, font_manager_get_font(wait_text, 14), 0);
+    lv_obj_set_style_text_font(response_label, font_manager_get_font(wait_text, 12), 0);
     lv_obj_set_width(response_label, LCD_H_RES - 20);
+    lv_obj_set_height(response_label, LCD_V_RES - 80);  // 留出顶部和底部空间
     lv_label_set_long_mode(response_label, LV_LABEL_LONG_WRAP);
-    lv_obj_align(response_label, LV_ALIGN_CENTER, 0, 10);
+    lv_obj_set_style_text_align(response_label, LV_TEXT_ALIGN_LEFT, 0);
+    lv_obj_align(response_label, LV_ALIGN_TOP_LEFT, 10, 55);
 
-    // 创建状态标签
+    // 底部状态标签（右下角）
     ESP_LOGI(TAG, "  - 创建状态标签");
     status_label = lv_label_create(scr);
     const char *ready_text = "准备就绪";
     lv_label_set_text(status_label, ready_text);
     lv_obj_set_style_text_color(status_label, lv_color_hex(0xFFD700), 0);  // 金色
-    lv_obj_set_style_text_font(status_label, font_manager_get_font(ready_text, 14), 0);
-    lv_obj_align(status_label, LV_ALIGN_BOTTOM_MID, 0, -20);
+    lv_obj_set_style_text_font(status_label, font_manager_get_font(ready_text, 10), 0);
+    lv_obj_align(status_label, LV_ALIGN_BOTTOM_RIGHT, -5, -5);
 
     // 强制刷新屏幕
     lv_obj_invalidate(scr);
     lv_refr_now(NULL);
 
     lvgl_port_unlock();
-    ESP_LOGI(TAG, "✓ Mario UI 创建完成");
+    ESP_LOGI(TAG, "✓ 对话 UI 创建完成");
   } else {
     ESP_LOGE(TAG, "✗ 无法锁定 LVGL");
   }
@@ -420,6 +460,38 @@ static void init_wifi(void) {
   }
 }
 
+// 发送消息到百度智能体（清空之前的响应缓冲区）
+static esp_err_t send_message_to_agent(const char *message) {
+  // 保存用户输入
+  strncpy(current_user_input, message, sizeof(current_user_input) - 1);
+  current_user_input[sizeof(current_user_input) - 1] = '\0';
+  
+  // 清空响应缓冲区，准备接收新的回复
+  response_buffer_len = 0;
+  response_buffer[0] = '\0';
+  
+  ESP_LOGI(TAG, "发送消息: %s", message);
+  ESP_LOGI(TAG, "已清空响应缓冲区");
+  
+  // 更新 UI 显示用户输入
+  if (lvgl_port_lock(100)) {
+    if (user_input_label != NULL) {
+      lv_label_set_text(user_input_label, current_user_input);
+      lv_obj_set_style_text_font(user_input_label, font_manager_get_font(current_user_input, 12), 0);
+    }
+    if (status_label != NULL) {
+      lv_label_set_text(status_label, "发送中...");
+      lv_obj_set_style_text_font(status_label, font_manager_get_font("发送中...", 10), 0);
+    }
+    if (response_label != NULL) {
+      lv_label_set_text(response_label, "");
+    }
+    lvgl_port_unlock();
+  }
+  
+  return baidu_agent_send_message(agent_handle, message, 0);
+}
+
 // 初始化百度智能体
 static void init_baidu_agent(void) {
   ESP_LOGI(TAG, "初始化百度智能体客户端...");
@@ -427,6 +499,8 @@ static void init_baidu_agent(void) {
   baidu_agent_config_t config = {
     .app_id = "PcQ6T6ShKPSGSeaITclWx8WS0HQ70opz",
     .secret_key = "YLMyCANTXF4TNhRdww9LrLXSGVtTKdje",
+    .open_id = "esp32_user_001",  // 唯一用户ID
+    .thread_id = NULL,  // 首次对话为NULL
     .callback = agent_event_callback,
     .user_data = NULL,
     .auto_reconnect = true,
@@ -490,7 +564,7 @@ void app_main(void) {
 
   // 发送测试消息
   ESP_LOGI(TAG, "发送测试消息到百度智能体...");
-  esp_err_t ret = baidu_agent_send_message(agent_handle, "你好，我是Mario！", 0);
+  esp_err_t ret = send_message_to_agent("你好，我是Mario！");
   if (ret == ESP_OK) {
     ESP_LOGI(TAG, "✓ 消息发送成功");
   } else {
