@@ -19,6 +19,7 @@
 #include "baidu_agent_client.h"
 #include "wifi_manager.h"
 #include "font_manager.h"
+#include "tts_service.h"
 #include <stdio.h>
 #include <string.h>
 
@@ -315,6 +316,15 @@ static void agent_event_callback(
       } else {
         ESP_LOGE(TAG, "✗ 无法获取 LVGL 锁");
       }
+      
+      // TTS 播报收到的文本片段
+      if (data_len > 0) {
+        char tts_text[512];
+        size_t copy_len = (data_len < sizeof(tts_text) - 1) ? data_len : sizeof(tts_text) - 1;
+        memcpy(tts_text, data, copy_len);
+        tts_text[copy_len] = '\0';
+        tts_speak_async(tts_text);  // 异步播报，不阻塞
+      }
       break;
       
     case BAIDU_AGENT_EVENT_ERROR:
@@ -492,6 +502,50 @@ static esp_err_t send_message_to_agent(const char *message) {
   return baidu_agent_send_message(agent_handle, message, 0);
 }
 
+// TTS 事件回调
+static void tts_event_callback(tts_event_type_t event, void *user_data) {
+  switch (event) {
+    case TTS_EVENT_START:
+      ESP_LOGI(TAG, "TTS 开始播放");
+      break;
+    case TTS_EVENT_STOP:
+      ESP_LOGI(TAG, "TTS 播放结束");
+      break;
+    case TTS_EVENT_ERROR:
+      ESP_LOGE(TAG, "TTS 播放错误");
+      break;
+    default:
+      break;
+  }
+}
+
+// 初始化本地 TTS 服务
+static void init_tts_service(void) {
+  ESP_LOGI(TAG, "初始化本地 TTS 语音合成服务...");
+  
+  tts_config_t tts_cfg = {
+    .sample_rate = 16000,
+    .speed = 1,           // 语速 0-5, 1=正常
+    .callback = tts_event_callback,
+    .user_data = NULL,
+    // 立创实战派 ESP32-S3 I2S 音频输出引脚 (参考 xiaozhi-esp32 配置)
+    .i2s_mclk_pin = 38,   // I2S MCLK (GPIO38)
+    .i2s_bclk_pin = 14,   // I2S BCLK (GPIO14)
+    .i2s_ws_pin = 13,     // I2S WS/LRCK (GPIO13)
+    .i2s_dout_pin = 45,   // I2S DOUT (GPIO45)
+    // 传递已初始化的 I2C 总线，用于控制音频放大器
+    .i2c_bus_handle = (void *)i2c_bus,
+  };
+  
+  esp_err_t ret = tts_service_init(&tts_cfg);
+  if (ret != ESP_OK) {
+    ESP_LOGE(TAG, "✗ 本地 TTS 服务初始化失败: %s", esp_err_to_name(ret));
+    return;
+  }
+  
+  ESP_LOGI(TAG, "✓ 本地 TTS 服务初始化完成 (离线语音合成)");
+}
+
 // 初始化百度智能体
 static void init_baidu_agent(void) {
   ESP_LOGI(TAG, "初始化百度智能体客户端...");
@@ -549,7 +603,10 @@ void app_main(void) {
   // 步骤 7: 初始化 WiFi
   init_wifi();
 
-  // 步骤 8: 初始化百度智能体
+  // 步骤 8: 初始化 TTS 服务
+  init_tts_service();
+
+  // 步骤 9: 初始化百度智能体
   init_baidu_agent();
 
   ESP_LOGI(TAG, "");
