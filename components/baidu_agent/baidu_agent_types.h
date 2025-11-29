@@ -31,6 +31,7 @@ typedef struct {
     bool should_stop;
     char *sse_buffer;
     size_t sse_buffer_pos;
+    char current_sse_event[32];  // 当前 SSE 事件类型
     int retry_count;
     char *thread_id;  // 动态存储的会话ID
     char *post_data;  // POST请求数据，需要在请求完成后释放

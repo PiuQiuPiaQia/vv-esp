@@ -67,8 +67,8 @@ static lv_obj_t *user_input_label = NULL;   // 用户输入（右对齐）
 static lv_obj_t *response_label = NULL;     // AI 响应（左对齐）
 static lv_obj_t *status_label = NULL;       // 底部状态（右下角）
 
-// 响应文本累积缓冲区
-#define RESPONSE_BUFFER_SIZE 2048
+// 响应文本累积缓冲区（用于屏幕显示和 TTS 播报）
+#define RESPONSE_BUFFER_SIZE 4096
 static char response_buffer[RESPONSE_BUFFER_SIZE] = {0};
 static size_t response_buffer_len = 0;
 
@@ -293,38 +293,22 @@ static void agent_event_callback(
     case BAIDU_AGENT_EVENT_MESSAGE:
       ESP_LOGI(TAG, "收到回复片段: %.*s", (int)data_len, data);
       
-      // 追加到缓冲区
+      // 追加到响应缓冲区（用于显示和最终 TTS 播报）
       if (response_buffer_len + data_len < RESPONSE_BUFFER_SIZE - 1) {
         memcpy(response_buffer + response_buffer_len, data, data_len);
         response_buffer_len += data_len;
         response_buffer[response_buffer_len] = '\0';
-      } else {
-        ESP_LOGW(TAG, "响应缓冲区已满，无法追加更多内容");
       }
       
       // 更新屏幕显示
       if (lvgl_port_lock(100)) {
         if (response_label != NULL) {
           lv_label_set_text(response_label, response_buffer);
-          // 动态更新字体以支持中文
           lv_obj_set_style_text_font(response_label, font_manager_get_font(response_buffer, 14), 0);
-          ESP_LOGI(TAG, "✓ 已更新屏幕显示 (累积长度: %d)", response_buffer_len);
-        } else {
-          ESP_LOGW(TAG, "response_label 为 NULL");
         }
         lvgl_port_unlock();
-      } else {
-        ESP_LOGE(TAG, "✗ 无法获取 LVGL 锁");
       }
-      
-      // TTS 播报收到的文本片段
-      if (data_len > 0) {
-        char tts_text[512];
-        size_t copy_len = (data_len < sizeof(tts_text) - 1) ? data_len : sizeof(tts_text) - 1;
-        memcpy(tts_text, data, copy_len);
-        tts_text[copy_len] = '\0';
-        tts_speak_async(tts_text);  // 异步播报，不阻塞
-      }
+      // 注意：不再实时进行 TTS 播报，等所有数据返回后统一播报
       break;
       
     case BAIDU_AGENT_EVENT_ERROR:
@@ -335,20 +319,27 @@ static void agent_event_callback(
           snprintf(error_text, sizeof(error_text), "错误: %s", data);
           lv_label_set_text(status_label, error_text);
           lv_obj_set_style_text_font(status_label, font_manager_get_font(error_text, 10), 0);
-          lv_obj_set_style_text_color(status_label, lv_color_hex(0xFF0000), 0);  // 红色
+          lv_obj_set_style_text_color(status_label, lv_color_hex(0xFF0000), 0);
         }
         lvgl_port_unlock();
       }
       break;
       
     case BAIDU_AGENT_EVENT_DISCONNECTED:
-      ESP_LOGI(TAG, "百度智能体已断开");
+      ESP_LOGI(TAG, "百度智能体已断开，SSE 数据接收完成");
+      
+      // 所有 SSE 数据接收完成后，调用一次 TTS 播报（边下载边播放）
+      if (response_buffer_len > 0) {
+        ESP_LOGI(TAG, "开始 TTS 播报 (%d 字节): %s", (int)response_buffer_len, response_buffer);
+        tts_speak_async(response_buffer);
+      }
+      
       if (lvgl_port_lock(100)) {
         if (status_label != NULL) {
           const char *done_text = "回答结束";
           lv_label_set_text(status_label, done_text);
           lv_obj_set_style_text_font(status_label, font_manager_get_font(done_text, 10), 0);
-          lv_obj_set_style_text_color(status_label, lv_color_hex(0xFFD700), 0);  // 恢复金色
+          lv_obj_set_style_text_color(status_label, lv_color_hex(0xFFD700), 0);
         }
         lvgl_port_unlock();
       }
@@ -476,12 +467,14 @@ static esp_err_t send_message_to_agent(const char *message) {
   strncpy(current_user_input, message, sizeof(current_user_input) - 1);
   current_user_input[sizeof(current_user_input) - 1] = '\0';
   
-  // 清空响应缓冲区，准备接收新的回复
+  // 清空响应缓冲区
   response_buffer_len = 0;
   response_buffer[0] = '\0';
   
+  // 停止当前 TTS 播放并清空队列
+  tts_stop();
+  
   ESP_LOGI(TAG, "发送消息: %s", message);
-  ESP_LOGI(TAG, "已清空响应缓冲区");
   
   // 更新 UI 显示用户输入
   if (lvgl_port_lock(100)) {
@@ -519,16 +512,19 @@ static void tts_event_callback(tts_event_type_t event, void *user_data) {
   }
 }
 
-// 初始化本地 TTS 服务
+// 初始化百度在线 TTS 服务
 static void init_tts_service(void) {
-  ESP_LOGI(TAG, "初始化本地 TTS 语音合成服务...");
+  ESP_LOGI(TAG, "初始化百度在线 TTS 语音合成服务...");
   
   tts_config_t tts_cfg = {
     .sample_rate = 16000,
-    .speed = 1,           // 语速 0-5, 1=正常
+    .speed = 5,           // 语速 0-15, 5=正常
     .callback = tts_event_callback,
     .user_data = NULL,
-    // 立创实战派 ESP32-S3 I2S 音频输出引脚 (参考 xiaozhi-esp32 配置)
+    // 百度语音合成 API 密钥
+    .api_key = "ZxiUoFWKhyB1vf9ohfy80l3E",
+    .secret_key = "1lixprru4FNeqtXT1kQMn5JARaVdWIQJ",
+    // 立创实战派 ESP32-S3 I2S 音频输出引脚
     .i2s_mclk_pin = 38,   // I2S MCLK (GPIO38)
     .i2s_bclk_pin = 14,   // I2S BCLK (GPIO14)
     .i2s_ws_pin = 13,     // I2S WS/LRCK (GPIO13)
@@ -539,11 +535,11 @@ static void init_tts_service(void) {
   
   esp_err_t ret = tts_service_init(&tts_cfg);
   if (ret != ESP_OK) {
-    ESP_LOGE(TAG, "✗ 本地 TTS 服务初始化失败: %s", esp_err_to_name(ret));
+    ESP_LOGE(TAG, "✗ 百度 TTS 服务初始化失败: %s", esp_err_to_name(ret));
     return;
   }
   
-  ESP_LOGI(TAG, "✓ 本地 TTS 服务初始化完成 (离线语音合成)");
+  ESP_LOGI(TAG, "✓ 百度在线 TTS 服务初始化完成");
 }
 
 // 初始化百度智能体

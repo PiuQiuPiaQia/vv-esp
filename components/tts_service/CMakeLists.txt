@@ -1,5 +1,5 @@
 idf_component_register(
-    SRCS "tts_service.c"
+    SRCS "streaming_tts.c" "tts_service.c"
     INCLUDE_DIRS "."
-    REQUIRES driver freertos
+    REQUIRES driver freertos esp_codec_dev esp_http_client mbedtls esp_timer
 )

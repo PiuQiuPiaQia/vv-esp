@@ -5,6 +5,7 @@
 #include "baidu_agent_json.h"
 #include "cJSON.h"
 #include "esp_log.h"
+#include "streaming_tts.h"
 #include <string.h>
 #include <stdio.h>
 
@@ -37,6 +38,13 @@ static void process_content_item(baidu_agent_client_t *client, cJSON *content_it
             const char *text = text_field->valuestring;
             ESP_LOGI(TAG, "AI回复 [markdown]: %s", text);
 
+            // 将文本推送到流式 TTS 处理流程
+            // Requirements: 1.1 - SSE 接收到文本数据时将文本追加到原始文本队列
+            esp_err_t tts_ret = streaming_tts_push_text(text);
+            if (tts_ret != ESP_OK) {
+                ESP_LOGW(TAG, "推送文本到 TTS 失败: %s", esp_err_to_name(tts_ret));
+            }
+
             if (client->config.callback) {
                 client->config.callback(
                     BAIDU_AGENT_EVENT_MESSAGE,
@@ -48,19 +56,34 @@ static void process_content_item(baidu_agent_client_t *client, cJSON *content_it
         }
     } else if (strcmp(type_str, "uiData") == 0) {
         // 处理 uiData 类型（基于一言 ui.json 规范）
-        char *ui_json = cJSON_PrintUnformatted(data_field);
-        if (ui_json) {
-            ESP_LOGI(TAG, "AI回复 [uiData]: %s", ui_json);
+        // 尝试从 uiData 中提取文本内容
+        cJSON *text_field = cJSON_GetObjectItem(data_field, "text");
+        if (text_field && cJSON_IsString(text_field)) {
+            const char *text = text_field->valuestring;
+            ESP_LOGI(TAG, "AI回复 [uiData.text]: %s", text);
             
+            // 将文本推送到流式 TTS 处理流程
+            // Requirements: 1.1 - SSE 接收到文本数据时将文本追加到原始文本队列
+            esp_err_t tts_ret = streaming_tts_push_text(text);
+            if (tts_ret != ESP_OK) {
+                ESP_LOGW(TAG, "推送文本到 TTS 失败: %s", esp_err_to_name(tts_ret));
+            }
+
             if (client->config.callback) {
                 client->config.callback(
                     BAIDU_AGENT_EVENT_MESSAGE,
-                    ui_json,
-                    strlen(ui_json),
+                    text,
+                    strlen(text),
                     client->config.user_data
                 );
             }
-            free(ui_json);
+        } else {
+            // 如果没有 text 字段，记录日志但不发送 JSON
+            char *ui_json = cJSON_PrintUnformatted(data_field);
+            if (ui_json) {
+                ESP_LOGI(TAG, "AI回复 [uiData] (无文本): %s", ui_json);
+                free(ui_json);
+            }
         }
     } else {
         ESP_LOGW(TAG, "未知的 dataType: %s", type_str);
@@ -110,6 +133,13 @@ static void process_message_content(baidu_agent_client_t *client, cJSON *message
     cJSON *end_turn = cJSON_GetObjectItem(message_obj, "endTurn");
     if (end_turn && cJSON_IsBool(end_turn) && cJSON_IsTrue(end_turn)) {
         ESP_LOGI(TAG, "对话轮次结束");
+        
+        // 标记文本流结束，触发剩余文本处理
+        // Requirements: 1.3 - SSE 连接断开时标记文本流结束
+        esp_err_t tts_ret = streaming_tts_end_stream();
+        if (tts_ret != ESP_OK) {
+            ESP_LOGW(TAG, "标记 TTS 流结束失败: %s", esp_err_to_name(tts_ret));
+        }
     }
 
     // 提取 msgId

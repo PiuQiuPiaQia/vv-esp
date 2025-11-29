@@ -30,13 +30,17 @@ typedef enum {
 typedef void (*tts_event_callback_t)(tts_event_type_t event, void *user_data);
 
 /**
- * TTS 配置 (本地 TTS)
+ * TTS 配置 (百度在线 TTS)
  */
 typedef struct {
     int sample_rate;            // 采样率 (默认 16000)
-    int speed;                  // 语速 0-5, 默认 1 (正常)
+    int speed;                  // 语速 0-15, 默认 5 (正常)
     tts_event_callback_t callback;
     void *user_data;
+    
+    // 百度 TTS API 配置
+    const char *api_key;        // 百度 API Key
+    const char *secret_key;     // 百度 Secret Key
     
     // I2S 音频输出配置 (立创实战派 ESP32-S3 默认值)
     int i2s_mclk_pin;           // I2S MCLK 引脚 (默认 38)
@@ -44,8 +48,8 @@ typedef struct {
     int i2s_ws_pin;             // I2S WS/LRCK 引脚 (默认 13)
     int i2s_dout_pin;           // I2S DOUT 引脚 (默认 45)
     
-    // I2C 总线句柄 (可选，用于控制 PCA9557 音频放大器和 ES8311 编解码器)
-    void *i2c_bus_handle;       // i2c_master_bus_handle_t, 如果为 NULL 则尝试自己创建
+    // I2C 总线句柄 (用于控制 PCA9557 音频放大器和 ES8311 编解码器)
+    void *i2c_bus_handle;       // i2c_master_bus_handle_t
 } tts_config_t;
 
 /**

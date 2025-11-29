@@ -20,6 +20,9 @@ esp_err_t baidu_agent_http_event_handler(esp_http_client_event_t *evt) {
         case HTTP_EVENT_ON_CONNECTED:
             ESP_LOGI(TAG, "已连接到服务器");
             ESP_LOGI(TAG, "等待服务器响应...");
+            // 重置 SSE 事件类型
+            strncpy(client->current_sse_event, "message", sizeof(client->current_sse_event) - 1);
+            client->current_sse_event[sizeof(client->current_sse_event) - 1] = '\0';
             if (client->config.callback) {
                 client->config.callback(
                     BAIDU_AGENT_EVENT_CONNECTED,
@@ -32,7 +35,7 @@ esp_err_t baidu_agent_http_event_handler(esp_http_client_event_t *evt) {
         case HTTP_EVENT_ON_DATA:
             // 接收 SSE 数据
             if (evt->data_len > 0) {
-                ESP_LOGI(TAG, "原始数据: %.*s", evt->data_len, (char*)evt->data);
+                ESP_LOGD(TAG, "原始数据 (%d bytes): %.*s", evt->data_len, evt->data_len, (char*)evt->data);
 
                 // 将数据追加到缓冲区
                 size_t remaining = SSE_BUFFER_SIZE - client->sse_buffer_pos - 1;
@@ -43,22 +46,34 @@ esp_err_t baidu_agent_http_event_handler(esp_http_client_event_t *evt) {
                     client->sse_buffer_pos += copy_len;
                     client->sse_buffer[client->sse_buffer_pos] = '\0';
 
-                    ESP_LOGI(TAG, "当前缓冲区: %s", client->sse_buffer);
-
                     // 处理缓冲区中的完整行
                     char *line_start = client->sse_buffer;
                     char *line_end;
-                    static char current_event[32] = "message";  // 默认事件类型
 
                     while ((line_end = strstr(line_start, "\n")) != NULL) {
+                        // 处理可能的 \r\n
+                        char *actual_end = line_end;
+                        if (actual_end > line_start && *(actual_end - 1) == '\r') {
+                            *(actual_end - 1) = '\0';
+                        }
                         *line_end = '\0';
+
+                        // 跳过空行（SSE 事件分隔符）
+                        if (strlen(line_start) == 0) {
+                            // 空行表示一个 SSE 事件结束，重置事件类型为默认值
+                            strncpy(client->current_sse_event, "message", sizeof(client->current_sse_event) - 1);
+                            line_start = line_end + 1;
+                            continue;
+                        }
 
                         // 解析 SSE event 行
                         if (strncmp(line_start, "event:", 6) == 0) {
                             const char *event_type = line_start + 6;
-                            strncpy(current_event, event_type, sizeof(current_event) - 1);
-                            current_event[sizeof(current_event) - 1] = '\0';
-                            ESP_LOGI(TAG, "SSE事件类型: %s", current_event);
+                            // 跳过可能的空格
+                            while (*event_type == ' ') event_type++;
+                            strncpy(client->current_sse_event, event_type, sizeof(client->current_sse_event) - 1);
+                            client->current_sse_event[sizeof(client->current_sse_event) - 1] = '\0';
+                            ESP_LOGI(TAG, "SSE事件类型: %s", client->current_sse_event);
                         }
                         // 解析 SSE data 行
                         else if (strncmp(line_start, "data:", 5) == 0) {
@@ -66,32 +81,35 @@ esp_err_t baidu_agent_http_event_handler(esp_http_client_event_t *evt) {
                             // 跳过可能的空格
                             while (*data == ' ') data++;
                             
-                            ESP_LOGI(TAG, "SSE数据 (事件=%s): %s", current_event, data);
+                            ESP_LOGI(TAG, "SSE数据 (事件=%s): %s", client->current_sse_event, data);
 
                             // 只处理 message 事件，跳过 ping 等其他事件
-                            if (strcmp(current_event, "message") == 0 && strcmp(data, "[DONE]") != 0) {
-                                baidu_agent_process_json(client, data);
+                            if (strcmp(client->current_sse_event, "message") == 0) {
+                                if (strcmp(data, "[DONE]") == 0) {
+                                    ESP_LOGI(TAG, "收到 [DONE] 标记，SSE 流结束");
+                                } else {
+                                    baidu_agent_process_json(client, data);
+                                }
                             } else {
-                                ESP_LOGD(TAG, "跳过非message事件或DONE消息");
+                                ESP_LOGD(TAG, "跳过非 message 事件: %s", client->current_sse_event);
                             }
-                        }
-                        // 空行表示一个 SSE 事件结束
-                        else if (strlen(line_start) == 0) {
-                            ESP_LOGD(TAG, "SSE事件分隔符（空行）");
                         }
 
                         line_start = line_end + 1;
                     }
 
                     // 将未处理的数据移到缓冲区开头
-                    size_t remaining_len = strlen(line_start);
+                    size_t remaining_len = client->sse_buffer + client->sse_buffer_pos - line_start;
                     if (remaining_len > 0 && line_start != client->sse_buffer) {
-                        memmove(client->sse_buffer, line_start, remaining_len + 1);
+                        memmove(client->sse_buffer, line_start, remaining_len);
                         client->sse_buffer_pos = remaining_len;
-                    } else if (remaining_len == 0) {
+                        client->sse_buffer[client->sse_buffer_pos] = '\0';
+                    } else if (line_start >= client->sse_buffer + client->sse_buffer_pos) {
                         client->sse_buffer_pos = 0;
                         client->sse_buffer[0] = '\0';
                     }
+                } else {
+                    ESP_LOGW(TAG, "SSE 缓冲区已满，丢弃数据");
                 }
             }
             break;

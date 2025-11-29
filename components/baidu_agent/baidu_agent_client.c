@@ -172,6 +172,9 @@ baidu_agent_handle_t baidu_agent_init(const baidu_agent_config_t *config) {
     client->retry_count = 0;
     client->thread_id = NULL;
     client->post_data = NULL;
+    // 初始化 SSE 事件类型为默认值
+    strncpy(client->current_sse_event, "message", sizeof(client->current_sse_event) - 1);
+    client->current_sse_event[sizeof(client->current_sse_event) - 1] = '\0';
 
     ESP_LOGI(TAG, "客户端初始化成功");
     return (baidu_agent_handle_t)client;
